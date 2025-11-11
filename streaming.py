@@ -26,7 +26,7 @@ for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https
 class HLSStreamer:
     """HLS streamer using Python screenshots + FFmpeg encoding"""
 
-    def __init__(self, bounds: dict = None, fps: int = 15, port: int = 5000, use_mpegts: bool = False):
+    def __init__(self, bounds: dict = None, fps: int = 15, port: int = 5000, use_mpegts: bool = False, monitor_index: int = 1):
         self.bounds = bounds or {}
         self.fps = fps
         self.port = port
@@ -35,6 +35,7 @@ class HLSStreamer:
         self.server_thread = None
         self.capture_thread = None
         self.use_mpegts = use_mpegts  # If True, use raw MPEG-TS instead of HLS
+        self.monitor_index = monitor_index  # Which monitor to capture (1=primary, 2=secondary, etc.)
 
         # HLS output directory
         self.hls_dir = Path("/tmp/dlna_hls")
@@ -216,16 +217,40 @@ class HLSStreamer:
     def _capture_loop(self):
         """Capture screenshots and pipe to FFmpeg - OPTIMIZED for low latency"""
         with mss.mss() as sct:
-            monitor = sct.monitors[1]  # Main monitor
             width, height = 1280, 720  # 720p HD
             target_time = 1.0 / self.fps
+
+            # List available monitors
+            print(f"[HLS] Available monitors: {len(sct.monitors) - 1}")  # -1 because monitors[0] is all monitors
+            for i, monitor in enumerate(sct.monitors):
+                if i > 0:  # Skip monitors[0] which is all monitors combined
+                    print(f"[HLS]   Monitor {i}: {monitor['width']}x{monitor['height']} at ({monitor['left']}, {monitor['top']})")
+
+            # Determine capture region
+            if self.bounds and all(k in self.bounds for k in ['X', 'Y', 'Width', 'Height']):
+                # Capture specific window bounds
+                capture_region = {
+                    "left": int(self.bounds['X']),
+                    "top": int(self.bounds['Y']),
+                    "width": int(self.bounds['Width']),
+                    "height": int(self.bounds['Height'])
+                }
+                print(f"[HLS] Capturing window region: {capture_region['width']}x{capture_region['height']} at ({capture_region['left']}, {capture_region['top']})")
+            else:
+                # Capture specified monitor (or primary if out of range)
+                if self.monitor_index < len(sct.monitors):
+                    capture_region = sct.monitors[self.monitor_index]
+                    print(f"[HLS] Capturing monitor {self.monitor_index}: {capture_region['width']}x{capture_region['height']}")
+                else:
+                    capture_region = sct.monitors[1]
+                    print(f"[HLS] Monitor {self.monitor_index} not found, using primary monitor")
 
             while self.running and self.ffmpeg_process and self.ffmpeg_process.poll() is None:
                 try:
                     frame_start = time.time()
 
-                    # Capture screenshot
-                    screenshot = sct.grab(monitor)
+                    # Capture screenshot from specified region
+                    screenshot = sct.grab(capture_region)
                     img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
 
                     # Resize to target resolution - use BILINEAR for speed (30% faster than LANCZOS)
