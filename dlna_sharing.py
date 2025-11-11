@@ -481,8 +481,16 @@ class StreamingScreen(Screen):
 
             # Start HLS streamer (segmented format works better with DLNA)
             debug_log("[Streaming] Starting HLS server with FFmpeg...")
+            debug_log(f"[Streaming] Window ID: {self.window.window_id}, Bounds: {self.window.bounds}")
             self.app.call_from_thread(status.update, "🎬 Starting video server (HLS)...")
-            self.streamer = MJPEGStreamer(self.window.bounds, fps=30, port=5000, use_mpegts=False)
+            # Use macOS native window capture by window ID
+            self.streamer = MJPEGStreamer(
+                bounds=self.window.bounds,
+                fps=30,
+                port=5000,
+                use_mpegts=False,
+                window_id=self.window.window_id  # Pass window ID for native capture
+            )
             self.streamer.start()
             stream_url = self.streamer.get_stream_url()
             debug_log(f"[Streaming] HLS server started at {stream_url}")

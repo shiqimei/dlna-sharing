@@ -26,7 +26,7 @@ for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https
 class HLSStreamer:
     """HLS streamer using Python screenshots + FFmpeg encoding"""
 
-    def __init__(self, bounds: dict = None, fps: int = 15, port: int = 5000, use_mpegts: bool = False, monitor_index: int = 1):
+    def __init__(self, bounds: dict = None, fps: int = 15, port: int = 5000, use_mpegts: bool = False, monitor_index: int = 1, window_id: int = None):
         self.bounds = bounds or {}
         self.fps = fps
         self.port = port
@@ -36,6 +36,7 @@ class HLSStreamer:
         self.capture_thread = None
         self.use_mpegts = use_mpegts  # If True, use raw MPEG-TS instead of HLS
         self.monitor_index = monitor_index  # Which monitor to capture (1=primary, 2=secondary, etc.)
+        self.window_id = window_id  # macOS window ID for native window capture
 
         # HLS output directory
         self.hls_dir = Path("/tmp/dlna_hls")
@@ -216,6 +217,13 @@ class HLSStreamer:
 
     def _capture_loop(self):
         """Capture screenshots and pipe to FFmpeg - OPTIMIZED for low latency"""
+        # Use macOS native window capture if window_id is provided
+        if self.window_id:
+            print(f"[HLS] Using macOS native window capture for window ID: {self.window_id}")
+            self._capture_loop_native_macos()
+            return
+
+        # Otherwise use mss for screen/monitor capture
         with mss.mss() as sct:
             width, height = 1280, 720  # 720p HD
             target_time = 1.0 / self.fps
@@ -268,6 +276,73 @@ class HLSStreamer:
                 except Exception as e:
                     print(f"[HLS] Capture error: {e}")
                     break
+
+    def _capture_loop_native_macos(self):
+        """Capture specific window using macOS native CGWindowListCreateImage"""
+        from Quartz import CGWindowListCreateImage, kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming
+        from Quartz import CGRectNull, CGImageGetWidth, CGImageGetHeight, CGImageGetDataProvider, CGDataProviderCopyData
+
+        width, height = 1280, 720  # 720p HD
+        target_time = 1.0 / self.fps
+
+        print(f"[HLS] Starting native macOS window capture for window ID: {self.window_id}")
+
+        while self.running and self.ffmpeg_process and self.ffmpeg_process.poll() is None:
+            try:
+                frame_start = time.time()
+
+                # Capture the specific window using macOS Core Graphics
+                # This captures the window even if it's partially obscured
+                cg_image = CGWindowListCreateImage(
+                    CGRectNull,  # Capture entire window bounds
+                    kCGWindowListOptionIncludingWindow,  # Only this window
+                    self.window_id,  # Window ID
+                    kCGWindowImageBoundsIgnoreFraming  # Exclude window frame/shadow
+                )
+
+                if not cg_image:
+                    print(f"[HLS] Failed to capture window {self.window_id} - window may be closed")
+                    break
+
+                # Convert CGImage to PIL Image
+                img_width = CGImageGetWidth(cg_image)
+                img_height = CGImageGetHeight(cg_image)
+
+                # Get raw pixel data
+                data_provider = CGImageGetDataProvider(cg_image)
+                raw_data = CGDataProviderCopyData(data_provider)
+
+                # Convert to PIL Image
+                img = Image.frombuffer(
+                    "RGBA",  # CGImage uses RGBA
+                    (img_width, img_height),
+                    raw_data,
+                    "raw",
+                    "BGRA",  # macOS uses BGRA byte order
+                    0,
+                    1
+                )
+
+                # Convert RGBA to RGB (remove alpha channel)
+                img = img.convert("RGB")
+
+                # Resize to target resolution
+                img = img.resize((width, height), Image.BILINEAR)
+
+                # Write raw RGB to FFmpeg stdin
+                self.ffmpeg_process.stdin.write(img.tobytes())
+
+                # Maintain FPS with more accurate timing
+                elapsed = time.time() - frame_start
+                sleep_time = target_time - elapsed
+                if sleep_time > 0.001:
+                    time.sleep(sleep_time)
+
+            except Exception as e:
+                print(f"[HLS] Native capture error: {e}")
+                import traceback
+                traceback.print_exc()
+                break
 
     def stop(self):
         """Stop streaming"""
