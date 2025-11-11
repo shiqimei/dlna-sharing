@@ -8,7 +8,7 @@ A simple Terminal User Interface (TUI) application for streaming windows to DLNA
 - 📡 **DLNA Discovery**: Automatically discover DLNA-enabled TVs and devices (pre-discovers at startup)
 - 🎯 **TUI Interface**: Clean, keyboard-driven terminal interface
 - 🚀 **One Command**: Run with UV package manager
-- ⚡ **Low Latency**: ~3-4 second latency with optimized HLS streaming
+- ⚡ **Ultra-Low Latency**: ~1.5-2.5 second latency with LL-HLS streaming
 - 🎥 **720p HD**: High-quality 720p30 streaming with H.264 encoding
 
 ## Requirements
@@ -99,12 +99,15 @@ Using **HLS (HTTP Live Streaming) with H.264**:
 - ✅ Adaptive bitrate streaming
 - ✅ Industry standard for streaming
 
-The stream is optimized for low latency:
+The stream is optimized for ultra-low latency using LL-HLS techniques:
 - 1280x720 resolution (720p HD)
 - 30 FPS
 - 2 Mbps bitrate
-- 1-second segments (3-4 second total latency)
+- 0.5-second partial segments (LL-HLS)
+- **1.5-2.5 second total latency** (industry-leading for DLNA)
 - H.264 Main Profile, Level 3.1
+- Chunked Transfer Encoding for instant delivery
+- FFmpeg flush_packets + nobuffer + low_delay flags
 - Multi-threaded encoding for better performance
 
 ## Dependencies

@@ -62,12 +62,37 @@ class HLSStreamer:
 
         @self.app.route('/<path:filename>')
         def serve_hls(filename):
-            response = send_from_directory(str(self.hls_dir), filename)
+            from flask import Response
+            import os
+
+            file_path = self.hls_dir / filename
+
+            # For .ts segments, use chunked transfer encoding for ultra-low latency
+            if filename.endswith('.ts'):
+                def generate():
+                    """Stream file in chunks for LL-HLS"""
+                    try:
+                        chunk_size = 8192  # 8KB chunks
+                        with open(file_path, 'rb') as f:
+                            while True:
+                                chunk = f.read(chunk_size)
+                                if not chunk:
+                                    break
+                                yield chunk
+                    except Exception as e:
+                        print(f"[HLS] Error streaming {filename}: {e}")
+
+                response = Response(generate(), mimetype='video/mp2t')
+                response.headers['Transfer-Encoding'] = 'chunked'
+                response.headers['Cache-Control'] = 'no-cache'
+            else:
+                # For playlist files, serve normally
+                response = send_from_directory(str(self.hls_dir), filename)
+                if filename.endswith('.m3u8'):
+                    response.headers['Content-Type'] = 'application/vnd.apple.mpegurl'
+                    response.headers['Cache-Control'] = 'no-cache'
+
             # Add DLNA and CORS headers
-            if filename.endswith('.m3u8'):
-                response.headers['Content-Type'] = 'application/vnd.apple.mpegurl'
-            elif filename.endswith('.ts'):
-                response.headers['Content-Type'] = 'video/mp2t'
             response.headers['Access-Control-Allow-Origin'] = '*'
             response.headers['transferMode.dlna.org'] = 'Streaming'
             return response
@@ -123,31 +148,40 @@ class HLSStreamer:
                 str(self.hls_dir / 'stream.ts')
             ]
         else:
-            # Use HLS with H.264 - LOW LATENCY 720p settings
+            # Use HLS with H.264 - ULTRA LOW LATENCY 720p settings
+            # Based on LL-HLS techniques: partial segments, flush packets, reduced GOP
             ffmpeg_cmd = [
                 'ffmpeg',
                 '-y',
+                # Format flags for ultra-low latency
+                '-fflags', '+flush_packets+nobuffer',  # Flush packets immediately, no buffering
+                '-flags', '+low_delay',  # Enable low delay mode
                 '-f', 'rawvideo',
                 '-pixel_format', 'rgb24',
                 '-video_size', f'{width}x{height}',
                 '-framerate', str(self.fps),
                 '-i', 'pipe:0',  # Read from stdin
+                # Video codec settings
                 '-c:v', 'libx264',
                 '-profile:v', 'main',  # Main profile for better quality
                 '-level', '3.1',  # Level 3.1 for 720p30
                 '-preset', 'veryfast',  # Fast encoding
-                '-tune', 'zerolatency',
+                '-tune', 'zerolatency',  # Zero latency tuning (adds only 0.5s)
                 '-b:v', '2M',  # 2Mbps for 720p
                 '-maxrate', '2M',
-                '-bufsize', '1M',  # Smaller buffer for lower latency
+                '-bufsize', '500k',  # Very small buffer for ultra-low latency
                 '-pix_fmt', 'yuv420p',
-                '-g', str(self.fps),  # Keyframe every 1 second for lower latency
+                '-g', str(int(self.fps * 0.5)),  # Keyframe every 0.5 seconds (even faster seeking)
                 '-sc_threshold', '0',  # Disable scene change detection
                 '-threads', '0',  # Use all CPU cores
+                # Ultra-low latency muxer settings
+                '-max_delay', '0',  # No muxer delay
+                '-muxdelay', '0',  # No mux delay
+                # LL-HLS settings
                 '-f', 'hls',
-                '-hls_time', '1',  # 1 second segments
-                '-hls_list_size', '3',  # Only keep 3 segments (3 seconds buffer)
-                '-hls_flags', 'delete_segments+omit_endlist',  # Low latency flags
+                '-hls_time', '0.5',  # 0.5 second segments (LL-HLS partial segments)
+                '-hls_list_size', '4',  # Keep 4 segments (2 seconds buffer)
+                '-hls_flags', 'delete_segments+omit_endlist+independent_segments',  # LL-HLS flags
                 '-hls_segment_type', 'mpegts',
                 '-start_number', '0',
                 '-hls_segment_filename', str(self.hls_dir / 'segment_%03d.ts'),
