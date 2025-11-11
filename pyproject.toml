@@ -1,0 +1,25 @@
+[project]
+name = "dlna-sharing"
+version = "0.1.0"
+description = "A simple DLNA sharing TUI app for streaming windows to local TVs"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.47.0",
+    "flask>=3.0.0",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "requests>=2.31.0",
+    "pillow>=10.2.0",
+    "mss>=9.0.1",
+    "netifaces>=0.11.0",
+]
+
+[project.scripts]
+dlna-share = "dlna_sharing:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []
